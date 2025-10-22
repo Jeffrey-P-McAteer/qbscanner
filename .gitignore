@@ -15,3 +15,7 @@ behavior.log
 # Build dependencies and cache
 *.cache
 *.tmp
+
+test_binary
+test_fileio
+

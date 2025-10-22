@@ -87,6 +87,8 @@ public:
         }
         logIO(pid, "PROCESS", details);
     }
+    
+    void logDataIO(pid_t pid, const std::string& operation, int fd, const std::vector<unsigned char>& data, long retval);
 };
 
 std::string getSyscallName(long syscall_num) {
@@ -152,6 +154,115 @@ std::string readStringFromProcess(pid_t pid, unsigned long addr, size_t max_len 
     return result;
 }
 
+std::vector<unsigned char> readDataFromProcess(pid_t pid, unsigned long addr, size_t len) {
+    std::vector<unsigned char> data;
+    if (addr == 0 || len == 0) return data;
+    
+    for (size_t i = 0; i < len; i += sizeof(long)) {
+        errno = 0;
+        long word = ptrace(PTRACE_PEEKDATA, pid, addr + i, nullptr);
+        if (errno != 0) break;
+        
+        unsigned char* bytes = (unsigned char*)&word;
+        for (size_t j = 0; j < sizeof(long) && (i + j) < len; j++) {
+            data.push_back(bytes[j]);
+        }
+    }
+    return data;
+}
+
+std::string bytesToHex(const std::vector<unsigned char>& data, size_t max_display = 256) {
+    std::stringstream ss;
+    size_t display_len = std::min(data.size(), max_display);
+    
+    for (size_t i = 0; i < display_len; i++) {
+        ss << std::hex << std::setfill('0') << std::setw(2) << (unsigned)data[i];
+        if (i < display_len - 1) ss << " ";
+    }
+    
+    if (data.size() > max_display) {
+        ss << "... (" << data.size() << " bytes total)";
+    }
+    
+    return ss.str();
+}
+
+bool isValidUtf8(const std::vector<unsigned char>& data) {
+    for (size_t i = 0; i < data.size(); ) {
+        unsigned char c = data[i];
+        
+        if (c <= 0x7F) {
+            i++;
+        } else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= data.size() || (data[i + 1] & 0xC0) != 0x80) return false;
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= data.size() || (data[i + 1] & 0xC0) != 0x80 || (data[i + 2] & 0xC0) != 0x80) return false;
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= data.size() || (data[i + 1] & 0xC0) != 0x80 || (data[i + 2] & 0xC0) != 0x80 || (data[i + 3] & 0xC0) != 0x80) return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string bytesToString(const std::vector<unsigned char>& data, size_t max_display = 256) {
+    std::string result;
+    size_t display_len = std::min(data.size(), max_display);
+    
+    for (size_t i = 0; i < display_len; i++) {
+        unsigned char c = data[i];
+        if (c >= 32 && c <= 126) {
+            result += (char)c;
+        } else if (c == '\n') {
+            result += "\\n";
+        } else if (c == '\r') {
+            result += "\\r";
+        } else if (c == '\t') {
+            result += "\\t";
+        } else if (c == '\0') {
+            result += "\\0";
+        } else {
+            result += "\\x" + std::to_string(c);
+        }
+    }
+    
+    if (data.size() > max_display) {
+        result += "... (" + std::to_string(data.size()) + " bytes total)";
+    }
+    
+    return result;
+}
+
+void BehaviorLogger::logDataIO(pid_t pid, const std::string& operation, int fd, const std::vector<unsigned char>& data, long retval) {
+    std::string hex_data = bytesToHex(data);
+    std::string str_data = bytesToString(data);
+    bool is_utf8 = isValidUtf8(data);
+    
+    logFile << "[" << getCurrentTime() << "] PID:" << pid << " " << operation 
+            << " fd=" << fd << " size=" << retval << " hex=[" << hex_data << "]";
+    
+    if (is_utf8 && !data.empty()) {
+        logFile << " utf8=\"" << str_data << "\"";
+    } else if (!data.empty()) {
+        logFile << " ascii=\"" << str_data << "\"";
+    }
+    
+    logFile << std::endl;
+    logFile.flush();
+}
+
+struct SyscallData {
+    unsigned long buffer_addr;
+    size_t buffer_size;
+    int fd;
+};
+
+std::map<pid_t, SyscallData> pending_io_calls;
+
 void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& regs, 
                        BehaviorLogger& logger, bool entering) {
     std::string syscall_name = getSyscallName(syscall_num);
@@ -160,11 +271,23 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
         std::string details;
         
         switch (syscall_num) {
-            case SYS_read:
-            case SYS_write: {
+            case SYS_read: {
                 int fd = regs.rdi;
+                unsigned long buffer = regs.rsi;
                 size_t count = regs.rdx;
                 details = "fd=" + std::to_string(fd) + " count=" + std::to_string(count);
+                
+                pending_io_calls[pid] = {buffer, count, fd};
+                break;
+            }
+            case SYS_write: {
+                int fd = regs.rdi;
+                unsigned long buffer = regs.rsi;
+                size_t count = regs.rdx;
+                details = "fd=" + std::to_string(fd) + " count=" + std::to_string(count);
+                
+                std::vector<unsigned char> data = readDataFromProcess(pid, buffer, count);
+                logger.logDataIO(pid, "WRITE_DATA", fd, data, count);
                 break;
             }
             case SYS_openat: {
@@ -239,6 +362,13 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
             details += " errno=" + std::to_string(-retval);
         }
         
+        if (syscall_num == SYS_read && retval > 0 && pending_io_calls.find(pid) != pending_io_calls.end()) {
+            SyscallData& call_data = pending_io_calls[pid];
+            std::vector<unsigned char> data = readDataFromProcess(pid, call_data.buffer_addr, retval);
+            logger.logDataIO(pid, "READ_DATA", call_data.fd, data, retval);
+            pending_io_calls.erase(pid);
+        }
+        
         logger.logSyscall(pid, syscall_name + "_exit", details);
     }
 }
@@ -269,6 +399,7 @@ void traceProcess(pid_t child_pid, BehaviorLogger& logger) {
             logger.logProcessActivity(waited_pid, "EXIT", "code=" + std::to_string(WEXITSTATUS(status)));
             tracked_processes.erase(waited_pid);
             in_syscall.erase(waited_pid);
+            pending_io_calls.erase(waited_pid);
             continue;
         }
         
@@ -276,6 +407,7 @@ void traceProcess(pid_t child_pid, BehaviorLogger& logger) {
             logger.logProcessActivity(waited_pid, "KILLED", "signal=" + std::to_string(WTERMSIG(status)));
             tracked_processes.erase(waited_pid);
             in_syscall.erase(waited_pid);
+            pending_io_calls.erase(waited_pid);
             continue;
         }
         
