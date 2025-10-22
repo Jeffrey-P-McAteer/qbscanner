@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <set>
+#include <map>
 
 
 class BehaviorLogger {
@@ -242,23 +244,39 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
 }
 
 void traceProcess(pid_t child_pid, BehaviorLogger& logger) {
-    int status;
-    bool in_syscall = false;
+    std::set<pid_t> tracked_processes;
+    std::map<pid_t, bool> in_syscall;
     
-    ptrace(PTRACE_SETOPTIONS, child_pid, 0, 
-           PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC);
+    tracked_processes.insert(child_pid);
+    in_syscall[child_pid] = false;
     
-    while (true) {
-        waitpid(child_pid, &status, 0);
+    while (!tracked_processes.empty()) {
+        int status;
+        pid_t waited_pid = waitpid(-1, &status, 0);
+        
+        if (waited_pid == -1) {
+            if (errno == ECHILD) {
+                break;
+            }
+            continue;
+        }
+        
+        if (tracked_processes.find(waited_pid) == tracked_processes.end()) {
+            continue;
+        }
         
         if (WIFEXITED(status)) {
-            logger.logProcessActivity(child_pid, "EXIT", "code=" + std::to_string(WEXITSTATUS(status)));
-            break;
+            logger.logProcessActivity(waited_pid, "EXIT", "code=" + std::to_string(WEXITSTATUS(status)));
+            tracked_processes.erase(waited_pid);
+            in_syscall.erase(waited_pid);
+            continue;
         }
         
         if (WIFSIGNALED(status)) {
-            logger.logProcessActivity(child_pid, "KILLED", "signal=" + std::to_string(WTERMSIG(status)));
-            break;
+            logger.logProcessActivity(waited_pid, "KILLED", "signal=" + std::to_string(WTERMSIG(status)));
+            tracked_processes.erase(waited_pid);
+            in_syscall.erase(waited_pid);
+            continue;
         }
         
         if (WIFSTOPPED(status)) {
@@ -266,27 +284,39 @@ void traceProcess(pid_t child_pid, BehaviorLogger& logger) {
             
             if (sig == (SIGTRAP | 0x80)) {
                 struct user_regs_struct regs;
-                ptrace(PTRACE_GETREGS, child_pid, nullptr, &regs);
+                ptrace(PTRACE_GETREGS, waited_pid, nullptr, &regs);
                 
-                if (!in_syscall) {
+                if (!in_syscall[waited_pid]) {
                     long syscall_num = regs.orig_rax;
-                    logDetailedSyscall(child_pid, syscall_num, regs, logger, true);
-                    in_syscall = true;
+                    logDetailedSyscall(waited_pid, syscall_num, regs, logger, true);
+                    in_syscall[waited_pid] = true;
                 } else {
                     long syscall_num = regs.orig_rax;
-                    logDetailedSyscall(child_pid, syscall_num, regs, logger, false);
-                    in_syscall = false;
+                    logDetailedSyscall(waited_pid, syscall_num, regs, logger, false);
+                    in_syscall[waited_pid] = false;
                 }
             } else if (sig == SIGTRAP) {
                 if (status >> 16 == PTRACE_EVENT_FORK || status >> 16 == PTRACE_EVENT_CLONE) {
                     unsigned long new_pid;
-                    ptrace(PTRACE_GETEVENTMSG, child_pid, nullptr, &new_pid);
-                    logger.logProcessActivity(child_pid, "CHILD_CREATED", "child_pid=" + std::to_string(new_pid));
+                    ptrace(PTRACE_GETEVENTMSG, waited_pid, nullptr, &new_pid);
+                    logger.logProcessActivity(waited_pid, "CHILD_CREATED", "child_pid=" + std::to_string(new_pid));
+                    
+                    tracked_processes.insert((pid_t)new_pid);
+                    in_syscall[(pid_t)new_pid] = false;
+                    
+                    ptrace(PTRACE_SETOPTIONS, (pid_t)new_pid, 0, 
+                           PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC);
+                } else if (status >> 16 == PTRACE_EVENT_EXEC) {
+                    logger.logProcessActivity(waited_pid, "EXEC_COMPLETE", "");
                 }
+            } else if (sig == SIGSTOP) {
+                logger.logProcessActivity(waited_pid, "STOPPED", "signal=SIGSTOP");
+            } else {
+                logger.logProcessActivity(waited_pid, "SIGNAL", "signal=" + std::to_string(sig));
             }
         }
         
-        ptrace(PTRACE_SYSCALL, child_pid, nullptr, nullptr);
+        ptrace(PTRACE_SYSCALL, waited_pid, nullptr, nullptr);
     }
 }
 
@@ -310,12 +340,23 @@ int main(int argc, char* argv[]) {
         int status;
         waitpid(pid, &status, 0);
         
+        if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP) {
+            std::cerr << "Child process didn't stop as expected" << std::endl;
+            return 1;
+        }
+        
         std::string command_line = argv[1];
         for (int i = 2; i < argc; i++) {
             command_line += " " + std::string(argv[i]);
         }
         
         logger.logProcessActivity(pid, "START", command_line);
+        
+        ptrace(PTRACE_SETOPTIONS, pid, 0, 
+               PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC);
+        
+        ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+        
         traceProcess(pid, logger);
         logger.logProcessActivity(pid, "COMPLETE", "");
     } else {
