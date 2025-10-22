@@ -20,6 +20,11 @@
 #include <arpa/inet.h>
 #include <set>
 #include <map>
+#include <sys/mman.h>
+#include <asm/prctl.h>
+#include <sys/prctl.h>
+#include <linux/futex.h>
+#include <sys/resource.h>
 
 
 class BehaviorLogger {
@@ -142,6 +147,126 @@ std::string getSyscallName(long syscall_num) {
         case 334: return "rseq";
         default: return "syscall_" + std::to_string(syscall_num);
     }
+}
+
+// Helper functions to decode syscall arguments into meaningful names
+std::string decodeArchPrctlCode(unsigned long code) {
+    switch(code) {
+        case ARCH_SET_GS: return "ARCH_SET_GS";
+        case ARCH_SET_FS: return "ARCH_SET_FS";
+        case ARCH_GET_FS: return "ARCH_GET_FS";
+        case ARCH_GET_GS: return "ARCH_GET_GS";
+        case ARCH_SET_CPUID: return "ARCH_SET_CPUID";
+        case ARCH_GET_CPUID: return "ARCH_GET_CPUID";
+        default: return std::to_string(code);
+    }
+}
+
+std::string decodeMmapProt(unsigned long prot) {
+    std::vector<std::string> flags;
+    if (prot & PROT_READ) flags.push_back("PROT_READ");
+    if (prot & PROT_WRITE) flags.push_back("PROT_WRITE");
+    if (prot & PROT_EXEC) flags.push_back("PROT_EXEC");
+    if (prot == PROT_NONE) flags.push_back("PROT_NONE");
+    
+    if (flags.empty()) return std::to_string(prot);
+    
+    std::string result;
+    for (size_t i = 0; i < flags.size(); i++) {
+        if (i > 0) result += "|";
+        result += flags[i];
+    }
+    return result;
+}
+
+std::string decodeMmapFlags(unsigned long flags) {
+    std::vector<std::string> flag_names;
+    if (flags & MAP_PRIVATE) flag_names.push_back("MAP_PRIVATE");
+    if (flags & MAP_SHARED) flag_names.push_back("MAP_SHARED");
+    if (flags & MAP_ANONYMOUS) flag_names.push_back("MAP_ANONYMOUS");
+    if (flags & MAP_FIXED) flag_names.push_back("MAP_FIXED");
+    if (flags & MAP_GROWSDOWN) flag_names.push_back("MAP_GROWSDOWN");
+    if (flags & MAP_LOCKED) flag_names.push_back("MAP_LOCKED");
+    if (flags & MAP_NORESERVE) flag_names.push_back("MAP_NORESERVE");
+    if (flags & MAP_POPULATE) flag_names.push_back("MAP_POPULATE");
+    if (flags & MAP_NONBLOCK) flag_names.push_back("MAP_NONBLOCK");
+    if (flags & MAP_STACK) flag_names.push_back("MAP_STACK");
+    
+    if (flag_names.empty()) return std::to_string(flags);
+    
+    std::string result;
+    for (size_t i = 0; i < flag_names.size(); i++) {
+        if (i > 0) result += "|";
+        result += flag_names[i];
+    }
+    return result;
+}
+
+std::string decodeOpenFlags(unsigned long flags) {
+    std::vector<std::string> flag_names;
+    
+    // File access modes
+    int access_mode = flags & O_ACCMODE;
+    switch(access_mode) {
+        case O_RDONLY: flag_names.push_back("O_RDONLY"); break;
+        case O_WRONLY: flag_names.push_back("O_WRONLY"); break;
+        case O_RDWR: flag_names.push_back("O_RDWR"); break;
+    }
+    
+    // Additional flags
+    if (flags & O_CREAT) flag_names.push_back("O_CREAT");
+    if (flags & O_EXCL) flag_names.push_back("O_EXCL");
+    if (flags & O_NOCTTY) flag_names.push_back("O_NOCTTY");
+    if (flags & O_TRUNC) flag_names.push_back("O_TRUNC");
+    if (flags & O_APPEND) flag_names.push_back("O_APPEND");
+    if (flags & O_NONBLOCK) flag_names.push_back("O_NONBLOCK");
+    if (flags & O_SYNC) flag_names.push_back("O_SYNC");
+    if (flags & O_CLOEXEC) flag_names.push_back("O_CLOEXEC");
+    
+    if (flag_names.empty()) return std::to_string(flags);
+    
+    std::string result;
+    for (size_t i = 0; i < flag_names.size(); i++) {
+        if (i > 0) result += "|";
+        result += flag_names[i];
+    }
+    return result;
+}
+
+std::string decodeSocketDomain(unsigned long domain) {
+    switch(domain) {
+        case AF_UNIX: return "AF_UNIX";
+        case AF_INET: return "AF_INET";
+        case AF_INET6: return "AF_INET6";
+        case AF_NETLINK: return "AF_NETLINK";
+        case AF_PACKET: return "AF_PACKET";
+        default: return std::to_string(domain);
+    }
+}
+
+std::string decodeSocketType(unsigned long type) {
+    // Extract base type (remove flags)
+    unsigned long base_type = type & 0xFF;
+    std::vector<std::string> parts;
+    
+    switch(base_type) {
+        case SOCK_STREAM: parts.push_back("SOCK_STREAM"); break;
+        case SOCK_DGRAM: parts.push_back("SOCK_DGRAM"); break;
+        case SOCK_RAW: parts.push_back("SOCK_RAW"); break;
+        case SOCK_SEQPACKET: parts.push_back("SOCK_SEQPACKET"); break;
+        default: parts.push_back(std::to_string(base_type)); break;
+    }
+    
+    // Add flags
+    if (type & SOCK_NONBLOCK) parts.push_back("SOCK_NONBLOCK");
+    if (type & SOCK_CLOEXEC) parts.push_back("SOCK_CLOEXEC");
+    
+    std::string result;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i > 0) result += "|";
+        result += parts[i];
+    }
+    return result;
 }
 
 std::string readStringFromProcess(pid_t pid, unsigned long addr, size_t max_len = 256) {
@@ -307,16 +432,16 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
             case SYS_openat: {
                 int dirfd = regs.rdi;
                 std::string path = readStringFromProcess(pid, regs.rsi);
-                int flags = regs.rdx;
-                details = "dirfd=" + std::to_string(dirfd) + " path=" + path + " flags=0x" + 
-                         std::to_string(flags);
+                unsigned long flags = regs.rdx;
+                details = "dirfd=" + std::to_string(dirfd) + " path=" + path + 
+                         " flags=" + decodeOpenFlags(flags);
                 logger.logFileAccess(pid, "OPEN", path);
                 break;
             }
             case SYS_open: {
                 std::string path = readStringFromProcess(pid, regs.rdi);
-                int flags = regs.rsi;
-                details = "path=" + path + " flags=0x" + std::to_string(flags);
+                unsigned long flags = regs.rsi;
+                details = "path=" + path + " flags=" + decodeOpenFlags(flags);
                 logger.logFileAccess(pid, "OPEN", path);
                 break;
             }
@@ -326,10 +451,10 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
                 break;
             }
             case SYS_socket: {
-                int domain = regs.rdi;
-                int type = regs.rsi;
-                int protocol = regs.rdx;
-                details = "domain=" + std::to_string(domain) + " type=" + std::to_string(type) + 
+                unsigned long domain = regs.rdi;
+                unsigned long type = regs.rsi;
+                unsigned long protocol = regs.rdx;
+                details = "domain=" + decodeSocketDomain(domain) + " type=" + decodeSocketType(type) + 
                          " protocol=" + std::to_string(protocol);
                 logger.logNetworkActivity(pid, "SOCKET_CREATE", details);
                 break;
@@ -363,6 +488,90 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
             case SYS_fork:
             case SYS_clone: {
                 logger.logProcessActivity(pid, "FORK");
+                break;
+            }
+            // Additional syscalls with detailed argument decoding
+            case 158: { // arch_prctl
+                unsigned long code = regs.rdi;
+                unsigned long addr = regs.rsi;
+                details = "code=" + decodeArchPrctlCode(code) + " addr=0x" + 
+                         std::to_string(addr);
+                break;
+            }
+            case 9: { // mmap
+                unsigned long addr = regs.rdi;
+                unsigned long length = regs.rsi;
+                unsigned long prot = regs.rdx;
+                unsigned long flags = regs.r10;
+                int fd = regs.r8;
+                unsigned long offset = regs.r9;
+                details = "addr=0x" + std::to_string(addr) + " length=" + std::to_string(length) +
+                         " prot=" + decodeMmapProt(prot) + " flags=" + decodeMmapFlags(flags) +
+                         " fd=" + std::to_string(fd) + " offset=" + std::to_string(offset);
+                break;
+            }
+            case 10: { // mprotect
+                unsigned long addr = regs.rdi;
+                unsigned long len = regs.rsi;
+                unsigned long prot = regs.rdx;
+                details = "addr=0x" + std::to_string(addr) + " len=" + std::to_string(len) +
+                         " prot=" + decodeMmapProt(prot);
+                break;
+            }
+            case 11: { // munmap
+                unsigned long addr = regs.rdi;
+                unsigned long length = regs.rsi;
+                details = "addr=0x" + std::to_string(addr) + " length=" + std::to_string(length);
+                break;
+            }
+            case 12: { // brk
+                unsigned long brk = regs.rdi;
+                details = "brk=0x" + std::to_string(brk);
+                break;
+            }
+            case 17: { // pread64
+                int fd = regs.rdi;
+                unsigned long count = regs.rdx;
+                unsigned long offset = regs.r10;
+                details = "fd=" + std::to_string(fd) + " count=" + std::to_string(count) +
+                         " offset=" + std::to_string(offset);
+                break;
+            }
+            case 218: { // set_tid_address
+                unsigned long tidptr = regs.rdi;
+                details = "tidptr=0x" + std::to_string(tidptr);
+                break;
+            }
+            case 273: { // set_robust_list
+                unsigned long head = regs.rdi;
+                unsigned long len = regs.rsi;
+                details = "head=0x" + std::to_string(head) + " len=" + std::to_string(len);
+                break;
+            }
+            case 302: { // prlimit64
+                int pid_arg = regs.rdi;
+                unsigned long resource = regs.rsi;
+                unsigned long new_limit = regs.rdx;
+                unsigned long old_limit = regs.r10;
+                details = "pid=" + std::to_string(pid_arg) + " resource=" + std::to_string(resource) +
+                         " new_limit=0x" + std::to_string(new_limit) + " old_limit=0x" + std::to_string(old_limit);
+                break;
+            }
+            case 318: { // getrandom
+                unsigned long buf = regs.rdi;
+                unsigned long buflen = regs.rsi;
+                unsigned long flags = regs.rdx;
+                details = "buf=0x" + std::to_string(buf) + " buflen=" + std::to_string(buflen) +
+                         " flags=0x" + std::to_string(flags);
+                break;
+            }
+            case 334: { // rseq
+                unsigned long rseq_abi = regs.rdi;
+                unsigned long rseq_len = regs.rsi;
+                unsigned long flags = regs.rdx;
+                unsigned long sig = regs.r10;
+                details = "rseq=0x" + std::to_string(rseq_abi) + " rseq_len=" + std::to_string(rseq_len) +
+                         " flags=0x" + std::to_string(flags) + " sig=0x" + std::to_string(sig);
                 break;
             }
         }
