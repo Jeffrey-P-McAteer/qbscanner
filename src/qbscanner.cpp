@@ -126,6 +126,20 @@ std::string getSyscallName(long syscall_num) {
         case SYS_dup2: return "dup2";
         case SYS_pipe: return "pipe";
         case SYS_pipe2: return "pipe2";
+        // Add more common Linux syscalls with their numbers
+        case 8: return "lseek";
+        case 9: return "mmap";
+        case 10: return "mprotect";
+        case 11: return "munmap";
+        case 12: return "brk";
+        case 17: return "pread64";
+        case 158: return "arch_prctl";
+        case 218: return "set_tid_address";
+        case 231: return "exit_group";
+        case 273: return "set_robust_list";
+        case 302: return "prlimit64";
+        case 318: return "getrandom";
+        case 334: return "rseq";
         default: return "syscall_" + std::to_string(syscall_num);
     }
 }
@@ -353,7 +367,8 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
             }
         }
         
-        logger.logSyscall(pid, syscall_name + "_enter", details);
+        std::string enter_label = syscall_name + "_enter";
+        logger.logSyscall(pid, enter_label, details);
     } else {
         long retval = regs.rax;
         std::string details = "retval=" + std::to_string(retval);
@@ -369,7 +384,8 @@ void logDetailedSyscall(pid_t pid, long syscall_num, struct user_regs_struct& re
             pending_io_calls.erase(pid);
         }
         
-        logger.logSyscall(pid, syscall_name + "_exit", details);
+        std::string exit_label = syscall_name + "_exit";
+        logger.logSyscall(pid, exit_label, details);
     }
 }
 

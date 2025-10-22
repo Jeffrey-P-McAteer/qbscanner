@@ -52,9 +52,9 @@ class QBScannerTester:
     def run_command(self, cmd, description=None, cwd=None):
         """Run a command and return its result"""
         if description:
-            print(f"📋 {description}")
+            print(f"[INFO] {description}")
         
-        print(f"💻 Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
+        print(f"[RUN] {' '.join(cmd) if isinstance(cmd, list) else cmd}")
         
         try:
             result = subprocess.run(
@@ -66,18 +66,18 @@ class QBScannerTester:
             )
             return result.returncode == 0
         except subprocess.CalledProcessError as e:
-            print(f"❌ Command failed with exit code {e.returncode}")
+            print(f"[ERROR] Command failed with exit code {e.returncode}")
             return False
         except Exception as e:
-            print(f"❌ Error running command: {e}")
+            print(f"[ERROR] Error running command: {e}")
             return False
     
     def build_qbscanner(self):
         """Build qbscanner using the existing build.py script"""
-        print("🔨 Building QBScanner using build.py...")
+        print("[BUILD] Building QBScanner using build.py...")
         
         if not self.build_script.exists():
-            print(f"❌ Build script not found: {self.build_script}")
+            print(f"[ERROR] Build script not found: {self.build_script}")
             return False
         
         return self.run_command([sys.executable, str(self.build_script)], "Running build.py")
@@ -85,14 +85,14 @@ class QBScannerTester:
     def build_test_program(self, test_name):
         """Build a specific test program"""
         if test_name not in self.available_tests:
-            print(f"❌ Unknown test: {test_name}")
+            print(f"[ERROR] Unknown test: {test_name}")
             return False
         
         test_info = self.available_tests[test_name]
         source_file = self.test_programs_dir / test_info['source']
         
         if not source_file.exists():
-            print(f"❌ Test source not found: {source_file}")
+            print(f"[ERROR] Test source not found: {source_file}")
             return False
         
         # Ensure build directory exists
@@ -104,33 +104,33 @@ class QBScannerTester:
             # Copy shell script and make executable
             shutil.copy2(source_file, build_path)
             os.chmod(build_path, 0o755)
-            print(f"✅ Copied {test_name} to build directory")
+            print(f"[SUCCESS] Copied {test_name} to build directory")
             return True
         elif test_info['type'] == 'c':
             # Compile C program
             cmd = ["gcc", "-o", str(build_path), str(source_file)]
             return self.run_command(cmd, f"Compiling {test_name}")
         else:
-            print(f"❌ Unknown test type: {test_info['type']}")
+            print(f"[ERROR] Unknown test type: {test_info['type']}")
             return False
     
     def run_test(self, test_name, extra_args=None):
         """Run a test program with qbscanner"""
         if test_name not in self.available_tests:
-            print(f"❌ Unknown test: {test_name}")
+            print(f"[ERROR] Unknown test: {test_name}")
             return False
         
         test_info = self.available_tests[test_name]
         binary_path = self.build_dir / test_name
         
         if not binary_path.exists():
-            print(f"❌ Test binary not found: {binary_path}")
+            print(f"[ERROR] Test binary not found: {binary_path}")
             return False
         
         # Check if qbscanner exists
         qbscanner_path = self.base_dir / "qbscanner"
         if not qbscanner_path.exists():
-            print(f"❌ qbscanner binary not found: {qbscanner_path}")
+            print(f"[ERROR] qbscanner binary not found: {qbscanner_path}")
             return False
         
         # Prepare command
@@ -140,10 +140,10 @@ class QBScannerTester:
         if extra_args:
             cmd.extend(extra_args)
         
-        print(f"🚀 Running test: {test_name}")
-        print(f"📝 Description: {test_info['description']}")
+        print(f"[TEST] Running test: {test_name}")
+        print(f"[DESC] Description: {test_info['description']}")
         if extra_args:
-            print(f"📋 Extra args: {' '.join(extra_args)}")
+            print(f"[ARGS] Extra args: {' '.join(extra_args)}")
         print()
         
         success = self.run_command(cmd, f"Executing {test_name} with qbscanner")
@@ -152,14 +152,14 @@ class QBScannerTester:
         behavior_log = self.base_dir / "behavior.log"
         if behavior_log.exists():
             print()
-            print(f"📊 Behavior log written to: {behavior_log}")
-            print(f"📄 View with: cat {behavior_log}")
+            print(f"[LOG] Behavior log written to: {behavior_log}")
+            print(f"[VIEW] View with: cat {behavior_log}")
         
         return success
     
     def list_tests(self):
         """List all available tests"""
-        print("📋 Available tests:")
+        print("[LIST] Available tests:")
         print()
         if not self.available_tests:
             print("  No tests found in test-programs directory")
@@ -172,7 +172,7 @@ class QBScannerTester:
     
     def clean(self):
         """Clean build artifacts"""
-        print("🧹 Cleaning build artifacts...")
+        print("[CLEAN] Cleaning build artifacts...")
         
         # Remove qbscanner binary
         qbscanner_bin = self.base_dir / "qbscanner"
@@ -205,17 +205,17 @@ class QBScannerTester:
                 artifact_path.unlink()
                 print(f"   Removed {artifact}")
         
-        print("✅ Cleanup complete")
+        print("[SUCCESS] Cleanup complete")
     
     def run_all_tests(self, extra_args=None):
         """Run all available tests"""
-        print("🎯 Running all tests...")
+        print("[BATCH] Running all tests...")
         if extra_args:
-            print(f"📋 Extra args for all tests: {' '.join(extra_args)}")
+            print(f"[ARGS] Extra args for all tests: {' '.join(extra_args)}")
         print()
         
         if not self.available_tests:
-            print("❌ No tests found to run")
+            print("[ERROR] No tests found to run")
             return False
         
         success_count = 0
@@ -230,15 +230,15 @@ class QBScannerTester:
             if self.build_test_program(test_name):
                 if self.run_test(test_name, extra_args):
                     success_count += 1
-                    print("✅ Test completed successfully")
+                    print("[SUCCESS] Test completed successfully")
                 else:
-                    print("❌ Test failed")
+                    print("[ERROR] Test failed")
             else:
-                print("❌ Test build failed")
+                print("[ERROR] Test build failed")
             
             print()
         
-        print(f"📊 Results: {success_count}/{total_count} tests completed successfully")
+        print(f"[RESULTS] {success_count}/{total_count} tests completed successfully")
         return success_count == total_count
 
 def main():
@@ -278,9 +278,9 @@ def main():
     # Build qbscanner unless skipped
     if not args.no_build_qbscanner:
         if not tester.build_qbscanner():
-            print("❌ Failed to build qbscanner")
+            print("[ERROR] Failed to build qbscanner")
             return 1
-        print("✅ QBScanner built successfully")
+        print("[SUCCESS] QBScanner built successfully")
         print()
     
     # Run tests
@@ -295,7 +295,7 @@ def main():
         if not tester.run_test(args.test_name, extra_args if extra_args else None):
             return 1
         
-        print("✅ Test completed successfully")
+        print("[SUCCESS] Test completed successfully")
         return 0
     else:
         # No test specified, show help
