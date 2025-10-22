@@ -1,0 +1,17 @@
+# QEMU source and build artifacts
+qemu-*.tar.xz
+qemu-*/
+build/
+
+# Compiled binaries
+qbscanner
+*.o
+*.so
+*.a
+
+# Runtime output
+behavior.log
+
+# Build dependencies and cache
+*.cache
+*.tmp
