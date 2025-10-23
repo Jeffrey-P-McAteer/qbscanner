@@ -9,6 +9,7 @@
 #include <sstream>
 #include <cmath>
 #include <algorithm>
+#include "bitmap_renderer.h"
 
 struct IOEvent {
     std::string timestamp;
@@ -75,7 +76,7 @@ public:
     bool parseLogFile(const std::string& log_path);
     void analyzeDataFlow();
     void layoutNodes();
-    std::string generateSVG();
+    void renderVisualization(BitmapRenderer& renderer);
     bool savePNG(const std::string& png_path);
     void generateVisualization(const std::string& log_path, const std::string& output_path);
     

@@ -4,19 +4,6 @@
 #include <chrono>
 #include <random>
 
-// Header-only library includes will be added by build system
-#ifdef HAS_STB_IMAGE_WRITE
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-#endif
-
-#ifdef HAS_NANOSVG
-#define NANOSVG_IMPLEMENTATION
-#define NANOSVGRAST_IMPLEMENTATION
-#include "nanosvg.h"
-#include "nanosvgrast.h"
-#endif
-
 bool BehaviorVisualizer::parseLogFile(const std::string& log_path) {
     std::ifstream file(log_path);
     if (!file.is_open()) {
@@ -305,21 +292,13 @@ std::string BehaviorVisualizer::generateNodeTooltip(const std::string& type, con
     return tooltip.str();
 }
 
-std::string BehaviorVisualizer::generateSVG() {
-    std::stringstream svg;
-    
-    // SVG header
-    svg << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << std::endl;
-    svg << "<svg width=\"" << CANVAS_WIDTH << "\" height=\"" << CANVAS_HEIGHT << "\" "
-        << "xmlns=\"http://www.w3.org/2000/svg\">" << std::endl;
-    
-    // Background
-    svg << "<rect width=\"100%\" height=\"100%\" fill=\"#f8f9fa\"/>" << std::endl;
+void BehaviorVisualizer::renderVisualization(BitmapRenderer& renderer) {
+    // Clear with white background
+    renderer.clear(Color::white());
     
     // Title
-    svg << "<text x=\"" << CANVAS_WIDTH/2 << "\" y=\"30\" text-anchor=\"middle\" "
-        << "font-family=\"Arial, sans-serif\" font-size=\"18\" font-weight=\"bold\" fill=\"#333\">"
-        << "QBScanner I/O Behavior Visualization</text>" << std::endl;
+    Point title_pos(CANVAS_WIDTH/2 - 150, 30);
+    renderer.drawText("QBScanner I/O Behavior Visualization", title_pos, 18, Color::darkGray(), true);
     
     // Draw connections first (so they appear behind nodes)
     for (const auto& [pid, process] : processes) {
@@ -327,9 +306,19 @@ std::string BehaviorVisualizer::generateSVG() {
         for (const std::string& file_path : process.files_accessed) {
             if (files.find(file_path) != files.end()) {
                 const FileNode& file = files.at(file_path);
-                svg << "<line x1=\"" << process.x << "\" y1=\"" << process.y 
-                    << "\" x2=\"" << file.x << "\" y2=\"" << file.y 
-                    << "\" stroke=\"#bdc3c7\" stroke-width=\"1\" opacity=\"0.6\"/>" << std::endl;
+                double mid_x = (process.x + file.x) / 2;
+                double mid_y = (process.y + file.y) / 2;
+                
+                // Connection line
+                renderer.drawLine(Point(process.x, process.y), Point(file.x, file.y), Color::gray(), 2.0f);
+                
+                // Edge label with data transfer info
+                size_t total_bytes = file.total_read_bytes + file.total_write_bytes;
+                if (total_bytes > 0) {
+                    std::string bytes_str = formatBytes(total_bytes);
+                    Point text_size = renderer.measureText(bytes_str, 9);
+                    renderer.drawText(bytes_str, Point(mid_x - text_size.x/2, mid_y - 5), 9, Color::darkGray(), true);
+                }
             }
         }
         
@@ -337,9 +326,15 @@ std::string BehaviorVisualizer::generateSVG() {
         for (const std::string& net_key : process.network_connections) {
             if (networks.find(net_key) != networks.end()) {
                 const NetworkNode& network = networks.at(net_key);
-                svg << "<line x1=\"" << process.x << "\" y1=\"" << process.y 
-                    << "\" x2=\"" << network.x << "\" y2=\"" << network.y 
-                    << "\" stroke=\"#f39c12\" stroke-width=\"2\" opacity=\"0.7\"/>" << std::endl;
+                double mid_x = (process.x + network.x) / 2;
+                double mid_y = (process.y + network.y) / 2;
+                
+                // Connection line
+                renderer.drawLine(Point(process.x, process.y), Point(network.x, network.y), Color::orange(), 3.0f);
+                
+                // Edge label
+                Point text_size = renderer.measureText("NETWORK", 9);
+                renderer.drawText("NETWORK", Point(mid_x - text_size.x/2, mid_y - 5), 9, Color::orange(), true);
             }
         }
     }
@@ -347,158 +342,133 @@ std::string BehaviorVisualizer::generateSVG() {
     // Draw file nodes
     for (const auto& [path, file] : files) {
         double radius = calculateNodeSize(file.total_read_bytes + file.total_write_bytes);
-        const char* color = file.is_special_fd ? STDIO_COLOR : FILE_COLOR;
+        Color node_color = file.is_special_fd ? Color::purple() : Color::blue();
         
-        svg << "<circle cx=\"" << file.x << "\" cy=\"" << file.y 
-            << "\" r=\"" << radius << "\" fill=\"" << color << "\" "
-            << "stroke=\"#2c3e50\" stroke-width=\"1\">" << std::endl;
-        svg << "<title>" << escapeXML(generateNodeTooltip("File", path, file.total_read_bytes, file.total_write_bytes)) << "</title>" << std::endl;
-        svg << "</circle>" << std::endl;
+        // Node circle
+        renderer.drawCircle(Point(file.x, file.y), radius, node_color, Color::darkGray(), 2.0f);
         
-        // File label
+        // File label with better visibility
         std::string display_name = path;
         if (display_name.length() > 15) {
             display_name = "..." + display_name.substr(display_name.length() - 12);
         }
-        svg << "<text x=\"" << file.x << "\" y=\"" << file.y + radius + 15 
-            << "\" text-anchor=\"middle\" font-family=\"Arial, sans-serif\" font-size=\"10\" fill=\"#2c3e50\">"
-            << escapeXML(display_name) << "</text>" << std::endl;
+        
+        // White background for text
+        Point text_size = renderer.measureText(display_name, 10);
+        Rect text_bg(file.x - text_size.x/2 - 5, file.y + radius + 5, text_size.x + 10, 16);
+        renderer.drawRect(text_bg, Color::white(), Color::gray(), 1.0f);
+        
+        renderer.drawText(display_name, Point(file.x - text_size.x/2, file.y + radius + 17), 10, Color::darkGray(), true);
+        
+        // Data transfer info on the node
+        size_t total_bytes = file.total_read_bytes + file.total_write_bytes;
+        if (total_bytes > 0) {
+            std::string bytes_str = formatBytes(total_bytes);
+            Point bytes_size = renderer.measureText(bytes_str, 8);
+            renderer.drawText(bytes_str, Point(file.x - bytes_size.x/2, file.y + 4), 8, Color::white(), true);
+        }
     }
     
     // Draw process nodes
     for (const auto& [pid, process] : processes) {
         double radius = calculateNodeSize(process.total_read_bytes + process.total_write_bytes);
         
-        svg << "<circle cx=\"" << process.x << "\" cy=\"" << process.y 
-            << "\" r=\"" << radius << "\" fill=\"" << PROCESS_COLOR << "\" "
-            << "stroke=\"#27ae60\" stroke-width=\"2\">" << std::endl;
-        svg << "<title>" << escapeXML(generateNodeTooltip("Process", std::to_string(pid) + " (" + process.command + ")", 
-                                                         process.total_read_bytes, process.total_write_bytes)) << "</title>" << std::endl;
-        svg << "</circle>" << std::endl;
+        // Node circle
+        renderer.drawCircle(Point(process.x, process.y), radius, Color::green(), Color::green(), 3.0f);
         
-        // Process label
-        svg << "<text x=\"" << process.x << "\" y=\"" << process.y + radius + 15 
-            << "\" text-anchor=\"middle\" font-family=\"Arial, sans-serif\" font-size=\"10\" font-weight=\"bold\" fill=\"#27ae60\">"
-            << "PID " << pid << "</text>" << std::endl;
+        // Process ID on node
+        std::string pid_str = std::to_string(pid);
+        Point pid_size = renderer.measureText(pid_str, 10);
+        renderer.drawText(pid_str, Point(process.x - pid_size.x/2, process.y + 4), 10, Color::white(), true);
+        
+        // Process label with white background
+        std::string cmd_display = process.command;
+        if (cmd_display.length() > 20) {
+            cmd_display = cmd_display.substr(0, 17) + "...";
+        }
+        
+        std::string label = "PID " + std::to_string(pid) + " (" + cmd_display + ")";
+        Point label_size = renderer.measureText(label, 10);
+        Rect label_bg(process.x - label_size.x/2 - 5, process.y + radius + 5, label_size.x + 10, 16);
+        renderer.drawRect(label_bg, Color::white(), Color::green(), 1.0f);
+        
+        renderer.drawText(label, Point(process.x - label_size.x/2, process.y + radius + 17), 10, Color::green(), true);
+        
+        // Data transfer info
+        size_t total_bytes = process.total_read_bytes + process.total_write_bytes;
+        if (total_bytes > 0) {
+            std::string io_str = "I/O: " + formatBytes(total_bytes);
+            Point io_size = renderer.measureText(io_str, 9);
+            renderer.drawText(io_str, Point(process.x - io_size.x/2, process.y - radius - 5), 9, Color::green(), true);
+        }
     }
     
     // Draw network nodes
     for (const auto& [key, network] : networks) {
         double radius = calculateNodeSize(network.total_bytes);
         
-        svg << "<circle cx=\"" << network.x << "\" cy=\"" << network.y 
-            << "\" r=\"" << radius << "\" fill=\"" << NETWORK_COLOR << "\" "
-            << "stroke=\"#e67e22\" stroke-width=\"2\">" << std::endl;
-        svg << "<title>" << escapeXML(generateNodeTooltip("Network", network.connection_info, 0, network.total_bytes)) << "</title>" << std::endl;
-        svg << "</circle>" << std::endl;
+        // Node circle
+        renderer.drawCircle(Point(network.x, network.y), radius, Color::orange(), Color::orange(), 3.0f);
         
-        // Network label
-        svg << "<text x=\"" << network.x << "\" y=\"" << network.y + radius + 15 
-            << "\" text-anchor=\"middle\" font-family=\"Arial, sans-serif\" font-size=\"10\" fill=\"#e67e22\">"
-            << "Network</text>" << std::endl;
+        // Network icon/text on node
+        Point net_size = renderer.measureText("NET", 9);
+        renderer.drawText("NET", Point(network.x - net_size.x/2, network.y + 4), 9, Color::white(), true);
+        
+        // Network label with white background
+        std::string net_display = network.connection_info;
+        if (net_display.length() > 18) {
+            net_display = net_display.substr(0, 15) + "...";
+        }
+        
+        Point label_size = renderer.measureText(net_display, 10);
+        Rect label_bg(network.x - label_size.x/2 - 5, network.y + radius + 5, label_size.x + 10, 16);
+        renderer.drawRect(label_bg, Color::white(), Color::orange(), 1.0f);
+        
+        renderer.drawText(net_display, Point(network.x - label_size.x/2, network.y + radius + 17), 10, Color::orange(), true);
     }
     
-    // Legend
+    // Legend with white background
     double legend_x = CANVAS_WIDTH - 200;
     double legend_y = 50;
-    svg << "<text x=\"" << legend_x << "\" y=\"" << legend_y 
-        << "\" font-family=\"Arial, sans-serif\" font-size=\"14\" font-weight=\"bold\" fill=\"#333\">"
-        << "Legend:</text>" << std::endl;
+    
+    // Legend background
+    Rect legend_bg(legend_x - 10, legend_y - 20, 180, 140);
+    renderer.drawRect(legend_bg, Color::white(), Color::gray(), 2.0f);
+    
+    renderer.drawText("Legend:", Point(legend_x, legend_y), 14, Color::darkGray(), true);
     
     legend_y += 25;
-    svg << "<circle cx=\"" << legend_x + 10 << "\" cy=\"" << legend_y 
-        << "\" r=\"8\" fill=\"" << PROCESS_COLOR << "\"/>" << std::endl;
-    svg << "<text x=\"" << legend_x + 25 << "\" y=\"" << legend_y + 4 
-        << "\" font-family=\"Arial, sans-serif\" font-size=\"12\" fill=\"#333\">"
-        << "Process</text>" << std::endl;
+    renderer.drawCircle(Point(legend_x + 10, legend_y), 8, Color::green(), Color::green(), 2.0f);
+    renderer.drawText("Process (with PID)", Point(legend_x + 25, legend_y + 4), 12, Color::darkGray(), true);
     
     legend_y += 20;
-    svg << "<circle cx=\"" << legend_x + 10 << "\" cy=\"" << legend_y 
-        << "\" r=\"8\" fill=\"" << FILE_COLOR << "\"/>" << std::endl;
-    svg << "<text x=\"" << legend_x + 25 << "\" y=\"" << legend_y + 4 
-        << "\" font-family=\"Arial, sans-serif\" font-size=\"12\" fill=\"#333\">"
-        << "File</text>" << std::endl;
+    renderer.drawCircle(Point(legend_x + 10, legend_y), 8, Color::blue(), Color::darkGray(), 2.0f);
+    renderer.drawText("File (with size)", Point(legend_x + 25, legend_y + 4), 12, Color::darkGray(), true);
     
     legend_y += 20;
-    svg << "<circle cx=\"" << legend_x + 10 << "\" cy=\"" << legend_y 
-        << "\" r=\"8\" fill=\"" << STDIO_COLOR << "\"/>" << std::endl;
-    svg << "<text x=\"" << legend_x + 25 << "\" y=\"" << legend_y + 4 
-        << "\" font-family=\"Arial, sans-serif\" font-size=\"12\" fill=\"#333\">"
-        << "stdio</text>" << std::endl;
+    renderer.drawCircle(Point(legend_x + 10, legend_y), 8, Color::purple(), Color::darkGray(), 2.0f);
+    renderer.drawText("Standard I/O", Point(legend_x + 25, legend_y + 4), 12, Color::darkGray(), true);
     
     legend_y += 20;
-    svg << "<circle cx=\"" << legend_x + 10 << "\" cy=\"" << legend_y 
-        << "\" r=\"8\" fill=\"" << NETWORK_COLOR << "\"/>" << std::endl;
-    svg << "<text x=\"" << legend_x + 25 << "\" y=\"" << legend_y + 4 
-        << "\" font-family=\"Arial, sans-serif\" font-size=\"12\" fill=\"#333\">"
-        << "Network</text>" << std::endl;
+    renderer.drawCircle(Point(legend_x + 10, legend_y), 8, Color::orange(), Color::orange(), 2.0f);
+    renderer.drawText("Network Connection", Point(legend_x + 25, legend_y + 4), 12, Color::darkGray(), true);
     
-    svg << "</svg>" << std::endl;
-    
-    return svg.str();
+    legend_y += 25;
+    renderer.drawText("Node size = I/O volume", Point(legend_x, legend_y), 11, Color::gray());
 }
 
 bool BehaviorVisualizer::savePNG(const std::string& png_path) {
-#ifdef HAS_NANOSVG
-    std::string svg_content = generateSVG();
+#ifdef ENABLE_VISUALIZATION
+    // Create bitmap renderer
+    BitmapRenderer renderer(static_cast<int>(CANVAS_WIDTH), static_cast<int>(CANVAS_HEIGHT));
     
-    // Parse SVG
-    NSVGimage* image = nsvgParse(const_cast<char*>(svg_content.c_str()), "px", 96.0f);
-    if (!image) {
-        std::cerr << "Failed to parse SVG" << std::endl;
-        return false;
-    }
-    
-    // Create rasterizer
-    NSVGrasterizer* rast = nsvgCreateRasterizer();
-    if (!rast) {
-        std::cerr << "Failed to create SVG rasterizer" << std::endl;
-        nsvgDelete(image);
-        return false;
-    }
-    
-    // Render to bitmap
-    int width = (int)CANVAS_WIDTH;
-    int height = (int)CANVAS_HEIGHT;
-    std::vector<unsigned char> img_data(width * height * 4);
-    
-    nsvgRasterize(rast, image, 0, 0, 1.0f, img_data.data(), width, height, width * 4);
+    // Render the visualization
+    renderVisualization(renderer);
     
     // Save as PNG
-#ifdef HAS_STB_IMAGE_WRITE
-    int result = stbi_write_png(png_path.c_str(), width, height, 4, img_data.data(), width * 4);
-    
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    
-    return result != 0;
+    return renderer.savePNG(png_path);
 #else
-    std::cerr << "PNG saving not available - stb_image_write not included" << std::endl;
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    return false;
-#endif
-
-#else
-    std::cerr << "SVG rendering not available - nanoSVG not included" << std::endl;
-    
-    // Fallback: save SVG instead
-    std::string svg_content = generateSVG();
-    std::string svg_path = png_path;
-    size_t dot_pos = svg_path.find_last_of('.');
-    if (dot_pos != std::string::npos) {
-        svg_path = svg_path.substr(0, dot_pos) + ".svg";
-    } else {
-        svg_path += ".svg";
-    }
-    
-    std::ofstream svg_file(svg_path);
-    if (svg_file.is_open()) {
-        svg_file << svg_content;
-        svg_file.close();
-        std::cout << "Saved SVG visualization to: " << svg_path << std::endl;
-        return true;
-    }
+    std::cerr << "PNG rendering not available - visualization libraries not included" << std::endl;
     return false;
 #endif
 }

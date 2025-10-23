@@ -16,6 +16,7 @@ QEMU_DIR = f"qemu-{QEMU_VERSION}"
 # Header-only libraries for visualization
 HEADER_LIBS = {
     "stb_image_write.h": "https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h",
+    "stb_truetype.h": "https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h",
     "nanosvg.h": "https://raw.githubusercontent.com/memononen/nanosvg/master/src/nanosvg.h",
     "nanosvgrast.h": "https://raw.githubusercontent.com/memononen/nanosvg/master/src/nanosvgrast.h"
 }
@@ -125,19 +126,22 @@ def build_qbscanner(qemu_available=False):
     print("Building qbscanner...")
     
     # Check for visualization libraries
-    has_stb = os.path.exists(os.path.join(BUILD_DIR, "stb_image_write.h"))
+    has_stb_write = os.path.exists(os.path.join(BUILD_DIR, "stb_image_write.h"))
+    has_stb_truetype = os.path.exists(os.path.join(BUILD_DIR, "stb_truetype.h"))
     has_nanosvg = os.path.exists(os.path.join(BUILD_DIR, "nanosvg.h")) and os.path.exists(os.path.join(BUILD_DIR, "nanosvgrast.h"))
     
     visualization_flags = []
-    if has_stb:
+    if has_stb_write:
         visualization_flags.extend(["-DHAS_STB_IMAGE_WRITE", f"-I{BUILD_DIR}"])
+    if has_stb_truetype:
+        visualization_flags.extend(["-DHAS_STB_TRUETYPE", f"-I{BUILD_DIR}"])
     if has_nanosvg:
         visualization_flags.extend(["-DHAS_NANOSVG", f"-I{BUILD_DIR}"])
     
-    if has_stb and has_nanosvg:
+    if has_stb_write and has_stb_truetype:
         visualization_flags.append("-DENABLE_VISUALIZATION")
-        print("Building with full visualization support (PNG output)")
-    elif has_stb or has_nanosvg:
+        print("Building with full visualization support (PNG output with text rendering)")
+    elif has_stb_write or has_nanosvg:
         print("Building with partial visualization support (SVG output)")
     else:
         print("Building without visualization support")
@@ -178,7 +182,8 @@ def build_qbscanner(qemu_available=False):
         ] + glib_flags + qemu_include_paths + visualization_flags + [
             "-o", "qbscanner",
             "src/qbscanner.cpp",
-            "src/visualizer.cpp"
+            "src/visualizer.cpp",
+            "src/bitmap_renderer.cpp"
         ] + extra_libs + qemu_lib_paths
     else:
         print("Building standalone ptrace-based scanner...")
@@ -191,7 +196,8 @@ def build_qbscanner(qemu_available=False):
         ] + visualization_flags + [
             "-o", "qbscanner",
             "src/qbscanner.cpp",
-            "src/visualizer.cpp"
+            "src/visualizer.cpp",
+            "src/bitmap_renderer.cpp"
         ]
     
     run_command(compile_cmd)
