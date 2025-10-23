@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+qbscanner.egg-info/PKG-INFO
+qbscanner.egg-info/SOURCES.txt
+qbscanner.egg-info/dependency_links.txt
+qbscanner.egg-info/entry_points.txt
+qbscanner.egg-info/top_level.txt

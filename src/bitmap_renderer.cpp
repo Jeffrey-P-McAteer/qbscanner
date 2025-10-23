@@ -29,15 +29,21 @@ BitmapRenderer::~BitmapRenderer() {
 
 bool BitmapRenderer::loadSystemFont() {
 #ifdef HAS_STB_TRUETYPE
-    // Try to load a system font
-    std::vector<std::string> font_paths = {
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/arial.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/System/Library/Fonts/Arial.ttf",
-        "/Windows/Fonts/arial.ttf"
-    };
+    // Use cross-platform font discovery
+    std::vector<std::string> font_paths = ProcessMonitor::findSystemFonts();
+    
+    // Fallback paths if platform detection fails
+    if (font_paths.empty()) {
+        font_paths = {
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/arial.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Arial.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+            "C:\\Windows\\Fonts\\calibri.ttf"
+        };
+    }
     
     for (const auto& font_path : font_paths) {
         std::ifstream font_file(font_path, std::ios::binary);

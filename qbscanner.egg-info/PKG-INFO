@@ -1,0 +1,253 @@
+Metadata-Version: 2.4
+Name: qbscanner
+Version: 1.0.0
+Summary: QEMU-based behavior monitoring tool for security research
+Author-email: QBScanner Team <qbscanner@example.com>
+Project-URL: Homepage, https://github.com/qbscanner/qbscanner
+Project-URL: Repository, https://github.com/qbscanner/qbscanner.git
+Project-URL: Issues, https://github.com/qbscanner/qbscanner/issues
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Information Technology
+Classifier: Topic :: Security
+Classifier: Topic :: System :: Monitoring
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: C++
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Operating System :: MacOS
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+
+# QBScanner - QEMU-based Behavior Monitoring Tool
+
+QBScanner is a comprehensive system call and I/O monitoring tool designed for security analysis and behavioral monitoring of processes and their subprocesses. It uses ptrace to intercept and log all system calls, file operations, network activities, and process lifecycle events with detailed data capture.
+
+## Features
+
+- **Multi-process tracking**: Automatically tracks forked and cloned child processes
+- **Complete I/O monitoring**: Captures all read/write operations with actual data content
+- **Network activity logging**: Monitors socket operations, connections, and data transfers
+- **File system monitoring**: Tracks file access, creation, modification, and deletion
+- **Process lifecycle tracking**: Logs process creation, execution, and termination
+- **Data format support**: Provides both hex and UTF-8 decoded output for data analysis
+- **Comprehensive syscall coverage**: Identifies common Linux system calls by name
+- **Real-time logging**: Writes detailed behavior logs as programs execute
+
+## Quick Start
+
+### Build QBScanner
+
+```bash
+python3 build.py
+```
+
+This will:
+1. Download QEMU 8.2.0 source (for reference, though not strictly required)
+2. Compile qbscanner with standalone ptrace functionality
+3. Create the `qbscanner` binary in the project root
+
+### Basic Usage
+
+```bash
+./qbscanner <command> [arguments...]
+```
+
+Example:
+```bash
+./qbscanner /bin/ls -la
+./qbscanner python3 my_script.py
+./qbscanner /bin/bash -c "echo 'Hello World' > test.txt"
+```
+
+### View Results
+
+All monitoring data is written to `behavior.log` in the current directory:
+
+```bash
+cat behavior.log
+```
+
+## Installation Requirements
+
+- Linux system (x86_64)
+- GCC compiler with C++14 support
+- Python 3.6+ (for build script and test runner)
+- Standard development tools (make, wget, etc.)
+
+## Understanding the Output
+
+QBScanner generates detailed logs with the following types of entries:
+
+### Process Events
+```
+[timestamp] PID:1234 PROCESS: START cmd=/usr/bin/python3 script.py
+[timestamp] PID:1234 PROCESS: EXEC cmd=/usr/bin/python3
+[timestamp] PID:1234 PROCESS: EXIT cmd=code=0
+```
+
+### System Call Monitoring
+```
+[timestamp] PID:1234 SYSCALL:read_enter fd=3 count=1024
+[timestamp] PID:1234 SYSCALL:read_exit retval=256
+[timestamp] PID:1234 SYSCALL:getrandom_enter
+[timestamp] PID:1234 SYSCALL:getrandom_exit retval=8
+```
+
+### File Operations
+```
+[timestamp] PID:1234 FILE_ACCESS: OPEN path=/etc/passwd
+[timestamp] PID:1234 SYSCALL:openat_enter dirfd=-100 path=/etc/passwd flags=0x0
+[timestamp] PID:1234 SYSCALL:openat_exit retval=4
+```
+
+### Network Activity
+```
+[timestamp] PID:1234 NETWORK: SOCKET_CREATE domain=2 type=1 protocol=0
+[timestamp] PID:1234 NETWORK: CONNECT sockfd=4
+[timestamp] PID:1234 NETWORK: SEND sockfd=4 len=256
+```
+
+### Data Capture
+```
+[timestamp] PID:1234 READ_DATA fd=4 size=13 hex=[48 65 6c 6c 6f 20 57 6f 72 6c 64 21 0a] utf8="Hello World!\n"
+[timestamp] PID:1234 WRITE_DATA fd=1 size=13 hex=[48 65 6c 6c 6f 20 57 6f 72 6c 64 21 0a] utf8="Hello World!\n"
+```
+
+## Test Suite
+
+QBScanner includes a comprehensive test suite for validation and demonstration:
+
+### List Available Tests
+```bash
+python3 test.py --list
+```
+
+### Run Individual Tests
+```bash
+python3 test.py hello              # Simple Hello World
+python3 test.py fileio sample.txt  # File I/O with arguments
+python3 test.py network            # Network socket operations
+python3 test.py multiprocess       # Fork/wait operations
+python3 test.py shell              # Shell script execution
+```
+
+### Run All Tests
+```bash
+python3 test.py --all
+```
+
+### Test Suite Features
+- **Dynamic test discovery**: Automatically finds test programs in `test-programs/`
+- **Argument forwarding**: Pass additional arguments to test programs
+- **Build integration**: Uses the same build system as the main project
+- **Multiple program types**: Supports C programs and shell scripts
+
+## Use Cases
+
+### Security Analysis
+- Monitor suspicious program behavior
+- Detect unauthorized file access or network connections
+- Analyze malware or potentially malicious code
+- Track data exfiltration attempts
+
+### Software Development
+- Debug application I/O patterns
+- Analyze system call usage for optimization
+- Understand program dependencies and resource usage
+- Test application behavior in controlled environments
+
+### System Administration
+- Monitor process behavior for compliance
+- Track file system access patterns
+- Analyze network communication patterns
+- Troubleshoot application issues
+
+## Advanced Features
+
+### Multi-process Tracking
+QBScanner automatically tracks child processes created through:
+- `fork()` system calls
+- `clone()` system calls
+- Shell command execution with subprocesses
+
+### Data Content Analysis
+- **Hex output**: Raw byte representation for binary data analysis
+- **UTF-8 decoding**: Automatic string extraction when valid UTF-8 is detected
+- **ASCII fallback**: Character representation with escape sequences for non-printable bytes
+- **Size limiting**: Configurable data display limits to prevent log overflow
+
+### Network Monitoring
+Comprehensive coverage of network operations:
+- Socket creation (TCP, UDP, Unix domain)
+- Connection establishment and termination
+- Data transmission and reception
+- Bind and listen operations for servers
+
+## Limitations
+
+- **Linux only**: Currently supports Linux x86_64 systems
+- **Performance impact**: Adds overhead due to ptrace system call interception
+- **Privilege requirements**: May require appropriate permissions for process tracing
+- **Large data output**: Can generate substantial log files for I/O-intensive programs
+
+## Troubleshooting
+
+### Permission Errors
+If you encounter permission errors, ensure:
+- The user has ptrace permissions
+- SELinux/AppArmor policies allow process tracing
+- The target program is executable
+
+### Build Issues
+For build problems:
+```bash
+# Clean and rebuild
+python3 test.py --clean
+python3 build.py
+```
+
+### Missing Dependencies
+Ensure all required development tools are installed:
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential python3 wget
+
+# RHEL/CentOS/Fedora
+sudo yum install gcc gcc-c++ python3 wget make
+```
+
+## Contributing
+
+To contribute to QBScanner:
+
+1. Add new test programs to `test-programs/` directory
+2. Update syscall coverage in `getSyscallName()` function
+3. Test with the included test suite
+4. Ensure documentation is updated for new features
+
+## Architecture
+
+QBScanner consists of:
+
+- **qbscanner.cpp**: Main monitoring engine with ptrace implementation
+- **build.py**: Build system with QEMU integration support
+- **test.py**: Comprehensive test runner and validation suite
+- **test-programs/**: Collection of test programs for validation
+
+The tool operates by:
+1. Forking the target process with ptrace attachment
+2. Intercepting all system calls at entry and exit points
+3. Extracting relevant data from process memory
+4. Logging formatted output to behavior.log
+5. Automatically tracking newly created child processes
+
+## License
+
+QBScanner is designed for security research and legitimate system monitoring purposes. Users are responsible for ensuring compliance with applicable laws and regulations when monitoring system activities.

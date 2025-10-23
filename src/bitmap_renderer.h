@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <memory>
+#include "platform.h"
 
 struct Color {
     unsigned char r, g, b, a;
