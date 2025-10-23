@@ -11,6 +11,7 @@ qbscanner
 
 # Runtime output
 behavior.log
+behavior.png
 
 # Build dependencies and cache
 *.cache

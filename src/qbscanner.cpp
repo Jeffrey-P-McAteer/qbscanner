@@ -26,6 +26,9 @@
 #include <linux/futex.h>
 #include <sys/resource.h>
 
+#ifdef ENABLE_VISUALIZATION
+#include "visualizer.h"
+#endif
 
 class BehaviorLogger {
 private:
@@ -57,6 +60,14 @@ public:
             logFile << "=== QBScanner Behavior Log Ended at " << getCurrentTime() << " ===" << std::endl;
             logFile.close();
         }
+    }
+    
+    void generateVisualization() {
+        #ifdef ENABLE_VISUALIZATION
+        std::cout << "Generating behavior visualization..." << std::endl;
+        BehaviorVisualizer visualizer;
+        visualizer.generateVisualization("behavior.log", "behavior.png");
+        #endif
     }
     
     void logSyscall(pid_t pid, const std::string& syscall, const std::string& details = "") {
@@ -716,6 +727,9 @@ int main(int argc, char* argv[]) {
         
         traceProcess(pid, logger);
         logger.logProcessActivity(pid, "COMPLETE", "");
+        
+        // Generate visualization after tracing is complete
+        logger.generateVisualization();
     } else {
         std::cerr << "Failed to fork: " << strerror(errno) << std::endl;
         return 1;

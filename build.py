@@ -13,6 +13,13 @@ QEMU_URL = f"https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz"
 BUILD_DIR = "build"
 QEMU_DIR = f"qemu-{QEMU_VERSION}"
 
+# Header-only libraries for visualization
+HEADER_LIBS = {
+    "stb_image_write.h": "https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h",
+    "nanosvg.h": "https://raw.githubusercontent.com/memononen/nanosvg/master/src/nanosvg.h",
+    "nanosvgrast.h": "https://raw.githubusercontent.com/memononen/nanosvg/master/src/nanosvgrast.h"
+}
+
 def run_command(cmd, cwd=None, check=True):
     """Run a command and print output"""
     print(f"Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
@@ -39,6 +46,29 @@ def download_qemu():
         tar.extractall()
     
     print(f"QEMU extracted to {QEMU_DIR}")
+
+def download_header_libraries():
+    """Download header-only libraries for visualization"""
+    print("Downloading header-only libraries for visualization...")
+    
+    os.makedirs(BUILD_DIR, exist_ok=True)
+    
+    for filename, url in HEADER_LIBS.items():
+        target_path = os.path.join(BUILD_DIR, filename)
+        
+        if os.path.exists(target_path):
+            print(f"Header library {filename} already exists, skipping download")
+            continue
+        
+        try:
+            print(f"Downloading {filename} from {url}")
+            urllib.request.urlretrieve(url, target_path)
+            print(f"Downloaded {filename}")
+        except Exception as e:
+            print(f"Warning: Failed to download {filename}: {e}")
+            print("Visualization features may not be available")
+    
+    print("Header library download completed")
 
 def check_qbscanner_source():
     """Check if qbscanner source exists"""
@@ -94,6 +124,24 @@ def build_qbscanner(qemu_available=False):
     """Build the qbscanner tool"""
     print("Building qbscanner...")
     
+    # Check for visualization libraries
+    has_stb = os.path.exists(os.path.join(BUILD_DIR, "stb_image_write.h"))
+    has_nanosvg = os.path.exists(os.path.join(BUILD_DIR, "nanosvg.h")) and os.path.exists(os.path.join(BUILD_DIR, "nanosvgrast.h"))
+    
+    visualization_flags = []
+    if has_stb:
+        visualization_flags.extend(["-DHAS_STB_IMAGE_WRITE", f"-I{BUILD_DIR}"])
+    if has_nanosvg:
+        visualization_flags.extend(["-DHAS_NANOSVG", f"-I{BUILD_DIR}"])
+    
+    if has_stb and has_nanosvg:
+        visualization_flags.append("-DENABLE_VISUALIZATION")
+        print("Building with full visualization support (PNG output)")
+    elif has_stb or has_nanosvg:
+        print("Building with partial visualization support (SVG output)")
+    else:
+        print("Building without visualization support")
+    
     if qemu_available:
         print("Building with QEMU integration...")
         # Get QEMU build include paths and library paths
@@ -123,24 +171,27 @@ def build_qbscanner(qemu_available=False):
             
         compile_cmd = [
             "g++",
-            "-std=c++14",
+            "-std=c++17",
             "-O2",
             "-Wall",
             "-Wextra"
-        ] + glib_flags + qemu_include_paths + [
+        ] + glib_flags + qemu_include_paths + visualization_flags + [
             "-o", "qbscanner",
-            "src/qbscanner.cpp"
+            "src/qbscanner.cpp",
+            "src/visualizer.cpp"
         ] + extra_libs + qemu_lib_paths
     else:
         print("Building standalone ptrace-based scanner...")
         compile_cmd = [
             "g++",
-            "-std=c++14",
+            "-std=c++17",
             "-O2",
             "-Wall",
-            "-Wextra",
+            "-Wextra"
+        ] + visualization_flags + [
             "-o", "qbscanner",
-            "src/qbscanner.cpp"
+            "src/qbscanner.cpp",
+            "src/visualizer.cpp"
         ]
     
     run_command(compile_cmd)
@@ -154,6 +205,9 @@ def main():
     try:
         # Download and setup QEMU
         download_qemu()
+        
+        # Download header-only libraries for visualization
+        download_header_libraries()
         
         # Check qbscanner source exists
         check_qbscanner_source()
@@ -172,6 +226,7 @@ def main():
         print(f"qbscanner binary created: {os.path.abspath('qbscanner')}")
         print("\nUsage: ./qbscanner <command> [args...]")
         print("Output: behavior.log will contain all I/O monitoring data")
+        print("Output: behavior.png will contain visualization (if libraries available)")
         
     except subprocess.CalledProcessError as e:
         print(f"Build failed: {e}")
